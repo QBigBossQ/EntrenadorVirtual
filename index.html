@@ -287,8 +287,8 @@
             target: 10,
             phase: 'wait_active',
             pose: null,
-            camera: null,
-            audioCtx: null // Contexto de audio
+            stream: null, // Guardamos el stream directamente
+            audioCtx: null
         };
 
         const els = {
@@ -309,7 +309,7 @@
             logs: document.getElementById('debug-log')
         };
 
-        // --- SISTEMA DE AUDIO (Web Audio API) ---
+        // --- SISTEMA DE AUDIO ---
         function initAudio() {
             if (!state.audioCtx) {
                 const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -322,16 +322,12 @@
 
         function playBeep(freq = 600, duration = 0.1) {
             if (!state.audioCtx) initAudio();
-            
             const osc = state.audioCtx.createOscillator();
             const gain = state.audioCtx.createGain();
-            
             osc.connect(gain);
             gain.connect(state.audioCtx.destination);
-            
             osc.frequency.value = freq;
             osc.type = 'sine';
-            
             osc.start();
             gain.gain.setValueAtTime(0.1, state.audioCtx.currentTime);
             gain.gain.exponentialRampToValueAtTime(0.0001, state.audioCtx.currentTime + duration);
@@ -362,6 +358,7 @@
                 els.select.appendChild(opt);
             });
 
+            // Configurar MediaPipe
             state.pose = new window.Pose({
                 locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
             });
@@ -391,11 +388,18 @@
             log(`Ejercicio: ${EXERCISES_DB[state.currentEx].name}`);
         }
 
+        // --- CÁMARA (FIX MÓVIL) ---
         async function toggleCamera() {
-            initAudio(); // Asegurar audio activo
+            initAudio(); 
+            
+            // APAGAR CÁMARA
             if (state.cameraOn) {
-                if (state.camera) state.camera.stop();
-                state.cameraOn = false;
+                state.cameraOn = false; // Detener loop
+                if (state.stream) {
+                    state.stream.getTracks().forEach(track => track.stop());
+                }
+                els.video.srcObject = null;
+                
                 els.btnCam.textContent = "1. Cámara";
                 els.btnCam.style.background = "#2196F3";
                 els.btnStart.classList.remove('ready');
@@ -404,58 +408,83 @@
                 els.status.textContent = "Cámara Inactiva";
                 log("Cámara apagada.");
                 if(state.exercising) toggleExercise(); 
-            } else {
-                els.btnCam.textContent = "Cargando...";
+                return;
+            }
+
+            // ENCENDER CÁMARA
+            els.btnCam.textContent = "Cargando...";
+            try {
+                // Estrategia "Nuclear": Fallback agresivo para compatibilidad móvil
+                let stream;
                 try {
-                    let stream;
+                    // Intento 1: Configuración Ideal
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+                        audio: false 
+                    });
+                } catch (e1) {
                     try {
-                        // INTENTO 1: Configuración Ideal (PC/Laptop)
+                        // Intento 2: Configuración Estándar Móvil
+                        log("Reintentando modo móvil...");
                         stream = await navigator.mediaDevices.getUserMedia({
-                            video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+                            video: { facingMode: 'user' },
+                            audio: false
                         });
-                    } catch (err) {
-                        log("Intento 1 falló, probando config móvil...");
-                        // INTENTO 2: Configuración Básica (Celulares)
-                        // Pedimos "cualquier video frontal", sin exigir resolución
+                    } catch (e2) {
+                        // Intento 3: Lo que sea que tenga video
+                        log("Reintentando modo básico...");
                         stream = await navigator.mediaDevices.getUserMedia({
-                            video: { facingMode: 'user' }
+                            video: true,
+                            audio: false
                         });
                     }
-
-                    els.video.srcObject = stream;
-                    
-                    // Esperar a que el video tenga datos antes de iniciar IA
-                    els.video.onloadedmetadata = () => {
-                        els.video.play();
-                        els.canvas.width = els.video.videoWidth;
-                        els.canvas.height = els.video.videoHeight;
-                        
-                        state.camera = new window.Camera(els.video, {
-                            onFrame: async () => { if(state.pose) await state.pose.send({image: els.video}); },
-                            width: els.video.videoWidth, height: els.video.videoHeight
-                        });
-                        
-                        state.camera.start();
-                        state.cameraOn = true;
-                        
-                        els.btnCam.textContent = "Apagar";
-                        els.btnCam.style.background = "#555";
-                        els.btnStart.classList.add('ready');
-                        els.placeholder.style.display = 'none';
-                        els.status.className = 'status-badge status-on';
-                        els.status.textContent = "Detectando...";
-                        log("Cámara iniciada (Móvil/PC).");
-                    };
-                } catch (e) {
-                    alert("No se pudo iniciar la cámara. Verifica permisos o cierra otras apps.");
-                    els.btnCam.textContent = "1. Cámara";
-                    log("Error fatal de cámara: " + e.message);
                 }
+
+                state.stream = stream;
+                els.video.srcObject = stream;
+                
+                // Esperar a que el video esté listo para iniciar el bucle
+                els.video.onloadedmetadata = () => {
+                    els.video.play();
+                    els.canvas.width = els.video.videoWidth;
+                    els.canvas.height = els.video.videoHeight;
+                    state.cameraOn = true;
+                    
+                    // INICIAR BUCLE MANUAL (Esto reemplaza a camera.start())
+                    requestAnimationFrame(predictLoop);
+
+                    els.btnCam.textContent = "Apagar";
+                    els.btnCam.style.background = "#555";
+                    els.btnStart.classList.add('ready');
+                    els.placeholder.style.display = 'none';
+                    els.status.className = 'status-badge status-on';
+                    els.status.textContent = "Detectando...";
+                    log("Cámara iniciada correctamente.");
+                };
+
+            } catch (e) {
+                alert("Error fatal: No se pudo acceder a la cámara.");
+                els.btnCam.textContent = "1. Cámara";
+                log("Error: " + e.message);
             }
         }
 
+        // --- BUCLE DE PREDICCIÓN MANUAL ---
+        // Esto evita el error "NotReadableError" en móviles al no pedir la cámara dos veces
+        async function predictLoop() {
+            if (!state.cameraOn) return;
+
+            // Solo enviar a MediaPipe si el video tiene datos suficientes
+            if (els.video.readyState >= 2) {
+                await state.pose.send({image: els.video});
+            }
+            
+            // Repetir el ciclo lo más rápido posible
+            requestAnimationFrame(predictLoop);
+        }
+
         function toggleExercise() {
-            initAudio(); // Asegurar audio activo
+            initAudio();
             if (!state.cameraOn) return;
             if (state.exercising) {
                 state.exercising = false;
@@ -478,6 +507,8 @@
         function onResults(results) {
             els.ctx.save();
             els.ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
+            
+            // Dibujar esqueleto
             if (results.poseLandmarks) {
                 window.drawConnectors(els.ctx, results.poseLandmarks, window.POSE_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
                 window.drawLandmarks(els.ctx, results.poseLandmarks, {color: '#2196F3', lineWidth: 2, radius: 3});
@@ -580,11 +611,10 @@
                 if (state.phase === 'wait_active') {
                     if (active) {
                         state.phase = 'wait_rest'; 
-                        log("Zona alcanzada. Regresa para contar.");
+                        log("Zona alcanzada.");
                     }
                 } 
                 else if (state.phase === 'wait_rest') {
-                    // Si ya no está activo Y ha relajado el movimiento al menos al 30%
                     if (!active && percent < 30) {
                         completeRep();
                         state.phase = 'wait_active';
@@ -592,16 +622,14 @@
                 } 
 
             } catch (err) {
-                console.error(err);
+                // Fail silent
             }
         }
 
         function completeRep() {
             state.reps++;
             els.count.textContent = state.reps;
-            
-            // SONIDO DE REP
-            playBeep(600, 0.1); // Beep agudo (600Hz)
+            playBeep(600, 0.1);
             log(`Repetición ${state.reps} OK.`);
 
             els.feedback.textContent = `¡Repetición ${state.reps}!`;
@@ -610,8 +638,6 @@
 
             if (state.reps >= state.target) {
                 state.exercising = false;
-                
-                // SONIDO DE VICTORIA (Doble tono)
                 setTimeout(() => playBeep(800, 0.1), 100);
                 setTimeout(() => playBeep(1000, 0.3), 250);
 
