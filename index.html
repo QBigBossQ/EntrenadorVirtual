@@ -392,7 +392,7 @@
         }
 
         async function toggleCamera() {
-            initAudio(); // Inicializar audio con interacción de usuario
+            initAudio(); // Asegurar audio activo
             if (state.cameraOn) {
                 if (state.camera) state.camera.stop();
                 state.cameraOn = false;
@@ -407,32 +407,49 @@
             } else {
                 els.btnCam.textContent = "Cargando...";
                 try {
-                    const stream = await navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
-                    });
+                    let stream;
+                    try {
+                        // INTENTO 1: Configuración Ideal (PC/Laptop)
+                        stream = await navigator.mediaDevices.getUserMedia({
+                            video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+                        });
+                    } catch (err) {
+                        log("Intento 1 falló, probando config móvil...");
+                        // INTENTO 2: Configuración Básica (Celulares)
+                        // Pedimos "cualquier video frontal", sin exigir resolución
+                        stream = await navigator.mediaDevices.getUserMedia({
+                            video: { facingMode: 'user' }
+                        });
+                    }
+
                     els.video.srcObject = stream;
+                    
+                    // Esperar a que el video tenga datos antes de iniciar IA
                     els.video.onloadedmetadata = () => {
                         els.video.play();
                         els.canvas.width = els.video.videoWidth;
                         els.canvas.height = els.video.videoHeight;
+                        
                         state.camera = new window.Camera(els.video, {
                             onFrame: async () => { if(state.pose) await state.pose.send({image: els.video}); },
                             width: els.video.videoWidth, height: els.video.videoHeight
                         });
+                        
                         state.camera.start();
                         state.cameraOn = true;
+                        
                         els.btnCam.textContent = "Apagar";
                         els.btnCam.style.background = "#555";
                         els.btnStart.classList.add('ready');
                         els.placeholder.style.display = 'none';
                         els.status.className = 'status-badge status-on';
                         els.status.textContent = "Detectando...";
-                        log("Cámara iniciada.");
+                        log("Cámara iniciada (Móvil/PC).");
                     };
                 } catch (e) {
-                    alert("Asegúrate de dar permiso a la cámara.");
+                    alert("No se pudo iniciar la cámara. Verifica permisos o cierra otras apps.");
                     els.btnCam.textContent = "1. Cámara";
-                    log("Error de cámara: " + e.message);
+                    log("Error fatal de cámara: " + e.message);
                 }
             }
         }
