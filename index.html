@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Entrenador Virtual</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    
+    <style>
+        /* --- ESTILOS BASE --- */
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+        body { background-color: #f0f2f5; color: #333; line-height: 1.4; height: 100vh; display: flex; flex-direction: column; }
+        
+        header { 
+            text-align: center; padding: 10px; background: #fff; 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1); flex-shrink: 0; z-index: 10;
+        }
+        h1 { font-size: 1.1rem; color: #1a5fb4; margin: 0; font-weight: 800; }
+        .subtitle { font-size: 0.8rem; color: #666; }
+
+        .main-container {
+            display: flex; flex-direction: column; flex-grow: 1; overflow: hidden;
+            max-width: 1400px; margin: 0 auto; width: 100%;
+        }
+
+        .video-area {
+            position: relative; background: #000; width: 100%;
+            height: 40vh; min-height: 250px; flex-shrink: 0;
+            display: flex; justify-content: center; align-items: center;
+        }
+        #video, #canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        
+        .placeholder {
+            position: absolute; width: 100%; height: 100%; background: #eef2f5;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: #7f8c8d; text-align: center; z-index: 20;
+        }
+        .placeholder span { font-size: 3rem; margin-bottom: 10px; opacity: 0.5; }
+
+        .controls-area {
+            flex-grow: 1; background: #fff; padding: 15px;
+            overflow-y: auto; display: flex; flex-direction: column; gap: 15px;
+        }
+
+        .feedback-card {
+            background: #e3f2fd; border: 2px solid #2196F3; border-radius: 12px;
+            padding: 10px; text-align: center; box-shadow: 0 4px 6px rgba(33, 150, 243, 0.1);
+        }
+        .status-badge {
+            display: inline-block; padding: 3px 10px; border-radius: 12px;
+            font-size: 0.75rem; font-weight: bold; margin-bottom: 5px;
+        }
+        .status-off { background: #e0e0e0; color: #666; }
+        .status-on { background: #d4edda; color: #155724; }
+
+        #main-feedback { font-size: 1.3rem; font-weight: 800; color: #1565C0; margin: 5px 0; min-height: 1.4em; }
+        
+        .progress-track { height: 10px; background: #fff; border-radius: 5px; margin: 8px 0; overflow: hidden; border: 1px solid #bbdefb; }
+        .progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #42a5f5, #1565C0); transition: width 0.1s; }
+
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 5px; }
+        .stat-box { background: #fff; padding: 8px; border-radius: 8px; border: 1px solid #bbdefb; }
+        .stat-val { font-size: 1.4rem; font-weight: 800; color: #333; }
+        .stat-label { font-size: 0.7rem; color: #666; text-transform: uppercase; }
+
+        .action-buttons { display: flex; gap: 10px; }
+        .btn {
+            flex: 1; padding: 14px; border: none; border-radius: 10px;
+            font-size: 1rem; font-weight: 700; color: #fff; cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2); transition: transform 0.1s;
+        }
+        .btn:active { transform: scale(0.98); }
+        .btn-cam { background: #2196F3; }
+        .btn-start { background: #e0e0e0; color: #999; pointer-events: none; }
+        .btn-start.ready { background: #4CAF50; color: #fff; pointer-events: auto; }
+        .btn-start.active { background: #F44336; }
+
+        .form-group label { display: block; font-size: 0.85rem; font-weight: 700; color: #555; margin-bottom: 5px; }
+        select { 
+            width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; 
+            background: #f8f9fa; font-size: 0.95rem; 
+        }
+
+        .info-box {
+            background: #fff3cd; color: #856404; padding: 12px; border-radius: 8px;
+            font-size: 0.9rem; line-height: 1.4; border-left: 4px solid #ffc107;
+        }
+
+        #debug-log { 
+            display: block; 
+            margin-top: 10px; 
+            background: #222; 
+            color: #00ff00; 
+            padding: 10px; 
+            font-family: 'Courier New', monospace; 
+            height: 120px; 
+            overflow-y: scroll; 
+            border-radius: 8px; 
+            font-size: 0.75rem;
+            border: 1px solid #444;
+        }
+
+        @media (min-width: 900px) {
+            .main-container { flex-direction: row; padding: 20px; gap: 20px; }
+            .video-area { width: 60%; height: auto; aspect-ratio: 4/3; border-radius: 15px; overflow: hidden; }
+            .controls-area { width: 40%; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        }
+        
+        .header { display: flex; align-items: center; gap: 25px; justify-content: left;}
+        img { max-width: 40px; height: auto; }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <img src="logo.ico" alt="URDM" width="40" height="40" onerror="this.style.display='none'">
+        <div>
+            <h1>Entrenador Virtual</h1>
+            <div class="subtitle">Movimiento y Salud</div>
+        </div>
+    </header>
+   
+    <div class="main-container">
+        <div class="video-area">
+            <video id="video" playsinline></video>
+            <canvas id="canvas"></canvas>
+            <div class="placeholder" id="camera-placeholder">
+                <span>📷</span>
+                <p>Presiona <b>"Activar Cámara"</b><br>para iniciar</p>
+            </div>
+        </div>
+
+        <div class="controls-area">
+            
+            <div class="feedback-card">
+                <div id="detection-status" class="status-badge status-off">Cámara Inactiva</div>
+                <div id="main-feedback">Esperando...</div>
+                
+                <div class="progress-track">
+                    <div class="progress-fill" id="progress-bar"></div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-val" id="rep-count">0</div>
+                        <div class="stat-label">Repeticiones</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-val" id="angle-debug">--</div>
+                        <div class="stat-label">Sensor</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="action-buttons">
+                <button id="btn-cam" class="btn btn-cam">1. Cámara</button>
+                <button id="btn-start" class="btn btn-start">2. Iniciar</button>
+            </div>
+
+            <div class="form-group">
+                <label>Selecciona Ejercicio:</label>
+                <select id="exercise-select"></select> 
+            </div>
+
+            <div class="form-group">
+                <label>Objetivo:</label>
+                <select id="target-select">
+                    <option value="8">8 Reps (Principiante)</option>
+                    <option value="10" selected>10 Reps (Estándar)</option>
+                    <option value="12">12 Reps (Progreso)</option>
+                    <option value="15">15 Reps (Resistencia)</option>
+                </select>
+            </div>
+
+            <div class="info-box">
+                <p id="instructions-text">Cargando instrucciones...</p>
+            </div>
+            
+            <div id="debug-log">Logs del Sistema iniciados...</div>
+        </div>
+    </div>
+
+    <script>
+        const EXERCISES_DB = {
+            // --- FUERZA ---
+            'chair_squat': {
+                category: "FUERZA",
+                name: "Sentadilla (Fuerza de Piernas)",
+                type: 'angle', landmarks: [23, 25, 27], 
+                min: 100, max: 160, optimal: 90, phase: 'up',
+                instr: "Simula sentarte en una silla imaginaria y vuelve a subir. Mantén la espalda recta."
+            },
+            'bicep_curl': {
+                category: "FUERZA",
+                name: "Curl de Brazos (Bíceps)",
+                type: 'angle', landmarks: [11, 13, 15], 
+                min: 50, max: 150, optimal: 40, phase: 'down',
+                instr: "Dobla los codos llevando las manos hacia los hombros y baja suavemente."
+            },
+            'shoulder_press': {
+                category: "FUERZA",
+                name: "Press de Hombro (Arriba)",
+                type: 'angle', landmarks: [11, 13, 15],
+                min: 60, max: 160, optimal: 170, phase: 'down',
+                instr: "Manos a la altura de las orejas. Empuja hacia el techo y baja controlado."
+            },
+            'lateral_raise': {
+                category: "FUERZA",
+                name: "Vuelos Laterales (Hombros)",
+                type: 'angle_shoulder', landmarks: [23, 11, 13],
+                min: 80, max: 25, optimal: 90, phase: 'down',
+                instr: "Levanta los brazos a los lados hasta formar una 'T' y bájalos."
+            },
+            'wall_pushup': {
+                category: "FUERZA",
+                name: "Flexiones (Pecho/Brazos)",
+                type: 'angle', landmarks: [11, 13, 15], 
+                min: 80, max: 150, optimal: 70, phase: 'up',
+                instr: "Acerca el pecho a la cámara doblando codos y empuja para alejarte."
+            },
+
+            // --- CORE / ZONA MEDIA ---
+            'side_bend': {
+                category: "CORE",
+                name: "Inclinación Lateral (Cintura)",
+                type: 'angle_torso', landmarks: [11, 12], 
+                min: 15, max: 5, optimal: 30, phase: 'center',
+                instr: "De pie, desliza una mano por tu pierna inclinando el tronco hacia un lado."
+            },
+
+            // --- AERÓBICOS ---
+            'march': {
+                category: "AERÓBICO",
+                name: "Marcha en el Lugar",
+                type: 'knee_height', landmarks: [23, 25], 
+                min: 0.1, max: 0, optimal: 0.2, phase: 'down',
+                instr: "Marcha levantando las rodillas lo más alto posible, alternando piernas."
+            },
+            'knee_to_elbow': {
+                category: "AERÓBICO/CORE",
+                name: "Rodilla a Codo Cruzado",
+                type: 'cross_touch', landmarks: [13, 26], 
+                min: 0.25, max: 0.6, optimal: 0.1, phase: 'far',
+                instr: "Toca tu rodilla derecha con el codo izquierdo y viceversa. ¡Cruza!"
+            },
+            'step_touch': {
+                category: "AERÓBICO",
+                name: "Paso Lateral",
+                type: 'x_movement', landmarks: [23, 24],
+                min: 0.1, max: 0, optimal: 0.2, phase: 'center',
+                instr: "Da un paso a la derecha y junta pies. Luego a la izquierda."
+            },
+            'hamstring_curl': {
+                category: "AERÓBICO",
+                name: "Talones al Glúteo",
+                type: 'angle', landmarks: [23, 25, 27], 
+                min: 80, max: 150, optimal: 45, phase: 'down',
+                instr: "De pie, dobla la rodilla llevando el talón hacia tu glúteo."
+            },
+
+            // --- FLEXIBILIDAD ---
+            'overhead_reach': {
+                category: "FLEXIBILIDAD",
+                name: "Estiramiento al Techo",
+                type: 'position_y', landmarks: [15, 0], 
+                min: -0.2, max: 0.2, optimal: -0.5, phase: 'down',
+                instr: "Estira ambos brazos lo más alto posible sobre tu cabeza."
+            },
+            'toe_touch': {
+                category: "FLEXIBILIDAD",
+                name: "Toque de Punteras",
+                type: 'angle', landmarks: [11, 23, 25], 
+                min: 100, max: 160, optimal: 80, phase: 'up',
+                instr: "Inclínate suavemente hacia adelante intentando tocar tus rodillas o pies."
+            }
+        };
+
+        // --- VARIABLES DEL SISTEMA ---
+        let state = {
+            cameraOn: false,
+            exercising: false,
+            currentEx: 'chair_squat',
+            reps: 0,
+            target: 10,
+            phase: 'wait_active',
+            pose: null,
+            camera: null,
+            audioCtx: null // Contexto de audio
+        };
+
+        const els = {
+            video: document.getElementById('video'),
+            canvas: document.getElementById('canvas'),
+            ctx: document.getElementById('canvas').getContext('2d'),
+            btnCam: document.getElementById('btn-cam'),
+            btnStart: document.getElementById('btn-start'),
+            feedback: document.getElementById('main-feedback'),
+            status: document.getElementById('detection-status'),
+            select: document.getElementById('exercise-select'),
+            target: document.getElementById('target-select'),
+            progress: document.getElementById('progress-bar'),
+            count: document.getElementById('rep-count'),
+            debug: document.getElementById('angle-debug'),
+            instr: document.getElementById('instructions-text'),
+            placeholder: document.getElementById('camera-placeholder'),
+            logs: document.getElementById('debug-log')
+        };
+
+        // --- SISTEMA DE AUDIO (Web Audio API) ---
+        function initAudio() {
+            if (!state.audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                state.audioCtx = new AudioContext();
+            }
+            if (state.audioCtx.state === 'suspended') {
+                state.audioCtx.resume();
+            }
+        }
+
+        function playBeep(freq = 600, duration = 0.1) {
+            if (!state.audioCtx) initAudio();
+            
+            const osc = state.audioCtx.createOscillator();
+            const gain = state.audioCtx.createGain();
+            
+            osc.connect(gain);
+            gain.connect(state.audioCtx.destination);
+            
+            osc.frequency.value = freq;
+            osc.type = 'sine';
+            
+            osc.start();
+            gain.gain.setValueAtTime(0.1, state.audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.0001, state.audioCtx.currentTime + duration);
+            osc.stop(state.audioCtx.currentTime + duration);
+        }
+
+        function log(msg) {
+            const time = new Date().toLocaleTimeString();
+            const d = document.createElement('div');
+            d.textContent = `[${time}] ${msg}`;
+            d.style.borderBottom = "1px solid #333";
+            els.logs.prepend(d);
+        }
+
+        function init() {
+            let lastCat = "";
+            Object.keys(EXERCISES_DB).forEach(key => {
+                const ex = EXERCISES_DB[key];
+                if (ex.category !== lastCat) {
+                    const group = document.createElement('optgroup');
+                    group.label = `--- ${ex.category} ---`;
+                    els.select.appendChild(group);
+                    lastCat = ex.category;
+                }
+                const opt = document.createElement('option');
+                opt.value = key;
+                opt.text = ex.name;
+                els.select.appendChild(opt);
+            });
+
+            state.pose = new window.Pose({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`
+            });
+            state.pose.setOptions({
+                modelComplexity: 1, smoothLandmarks: true, 
+                minDetectionConfidence: 0.5, minTrackingConfidence: 0.5
+            });
+            state.pose.onResults(onResults);
+
+            els.btnCam.addEventListener('click', toggleCamera);
+            els.btnStart.addEventListener('click', toggleExercise);
+            els.select.addEventListener('change', updateInfo);
+            els.target.addEventListener('change', (e) => state.target = parseInt(e.target.value));
+
+            updateInfo();
+            log("Sistema listo.");
+        }
+
+        function updateInfo() {
+            state.currentEx = els.select.value;
+            state.reps = 0;
+            state.phase = 'wait_active';
+            els.count.textContent = '0';
+            els.progress.style.width = '0%';
+            els.instr.textContent = EXERCISES_DB[state.currentEx].instr;
+            if(!state.exercising) els.feedback.textContent = "Listo para iniciar";
+            log(`Ejercicio: ${EXERCISES_DB[state.currentEx].name}`);
+        }
+
+        async function toggleCamera() {
+            initAudio(); // Inicializar audio con interacción de usuario
+            if (state.cameraOn) {
+                if (state.camera) state.camera.stop();
+                state.cameraOn = false;
+                els.btnCam.textContent = "1. Cámara";
+                els.btnCam.style.background = "#2196F3";
+                els.btnStart.classList.remove('ready');
+                els.placeholder.style.display = 'flex';
+                els.status.className = 'status-badge status-off';
+                els.status.textContent = "Cámara Inactiva";
+                log("Cámara apagada.");
+                if(state.exercising) toggleExercise(); 
+            } else {
+                els.btnCam.textContent = "Cargando...";
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
+                    });
+                    els.video.srcObject = stream;
+                    els.video.onloadedmetadata = () => {
+                        els.video.play();
+                        els.canvas.width = els.video.videoWidth;
+                        els.canvas.height = els.video.videoHeight;
+                        state.camera = new window.Camera(els.video, {
+                            onFrame: async () => { if(state.pose) await state.pose.send({image: els.video}); },
+                            width: els.video.videoWidth, height: els.video.videoHeight
+                        });
+                        state.camera.start();
+                        state.cameraOn = true;
+                        els.btnCam.textContent = "Apagar";
+                        els.btnCam.style.background = "#555";
+                        els.btnStart.classList.add('ready');
+                        els.placeholder.style.display = 'none';
+                        els.status.className = 'status-badge status-on';
+                        els.status.textContent = "Detectando...";
+                        log("Cámara iniciada.");
+                    };
+                } catch (e) {
+                    alert("Asegúrate de dar permiso a la cámara.");
+                    els.btnCam.textContent = "1. Cámara";
+                    log("Error de cámara: " + e.message);
+                }
+            }
+        }
+
+        function toggleExercise() {
+            initAudio(); // Asegurar audio activo
+            if (!state.cameraOn) return;
+            if (state.exercising) {
+                state.exercising = false;
+                els.btnStart.textContent = "2. Iniciar";
+                els.btnStart.classList.remove('active');
+                els.feedback.textContent = "Pausa";
+                log("Ejercicio detenido.");
+            } else {
+                state.exercising = true;
+                state.reps = 0;
+                state.phase = 'wait_active';
+                els.count.textContent = "0";
+                els.btnStart.textContent = "Detener";
+                els.btnStart.classList.add('active');
+                els.feedback.textContent = "¡A moverse!";
+                log("¡Ejercicio iniciado!");
+            }
+        }
+
+        function onResults(results) {
+            els.ctx.save();
+            els.ctx.clearRect(0, 0, els.canvas.width, els.canvas.height);
+            if (results.poseLandmarks) {
+                window.drawConnectors(els.ctx, results.poseLandmarks, window.POSE_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
+                window.drawLandmarks(els.ctx, results.poseLandmarks, {color: '#2196F3', lineWidth: 2, radius: 3});
+                
+                if (state.exercising) processLogic(results.poseLandmarks);
+            }
+            els.ctx.restore();
+        }
+
+        function getAngle(a, b, c) {
+            const rad = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+            let ang = Math.abs(rad * 180.0 / Math.PI);
+            return ang > 180.0 ? 360 - ang : ang;
+        }
+
+        function processLogic(lm) {
+            const ex = EXERCISES_DB[state.currentEx];
+            let val = 0;
+            let percent = 0;
+
+            try {
+                // 1. CÁLCULO
+                if (ex.type === 'angle') {
+                    const p = ex.landmarks; 
+                    const valL = getAngle(lm[p[0]], lm[p[1]], lm[p[2]]);
+                    const valR = getAngle(lm[p[0]+1], lm[p[1]+1], lm[p[2]+1]);
+                    
+                    if (state.currentEx.includes('squat') || state.currentEx.includes('pushup')) {
+                        val = (valL + valR) / 2;
+                    } else {
+                        val = Math.abs(valL - ex.min) < Math.abs(valR - ex.min) ? valL : valR;
+                    }
+                } 
+                else if (ex.type === 'angle_shoulder') {
+                    const valL = getAngle(lm[23], lm[11], lm[13]);
+                    const valR = getAngle(lm[24], lm[12], lm[14]);
+                    val = Math.max(valL, valR);
+                } 
+                else if (ex.type === 'angle_torso') {
+                    const dx = lm[11].x - lm[12].x;
+                    const dy = lm[11].y - lm[12].y;
+                    val = Math.abs(Math.atan2(dy, dx) * 180 / Math.PI);
+                } 
+                else if (ex.type === 'position_y') {
+                    const wristY = Math.min(lm[15].y, lm[16].y);
+                    const noseY = lm[0].y;
+                    val = wristY - noseY; 
+                }
+                else if (ex.type === 'knee_height') {
+                    const diffL = lm[23].y - lm[25].y; 
+                    const diffR = lm[24].y - lm[26].y;
+                    val = Math.max(diffL, diffR);
+                }
+                else if (ex.type === 'cross_touch') {
+                    const d1 = Math.hypot(lm[13].x - lm[26].x, lm[13].y - lm[26].y);
+                    const d2 = Math.hypot(lm[14].x - lm[25].x, lm[14].y - lm[25].y);
+                    val = Math.min(d1, d2); 
+                }
+                else if (ex.type === 'x_movement') {
+                    val = Math.abs(lm[27].x - lm[28].x);
+                }
+
+                els.debug.textContent = Math.round(val);
+
+                // 2. PROGRESO
+                if (ex.max > ex.min) {
+                    percent = (ex.max - val) / (ex.max - ex.min) * 100;
+                } else {
+                    percent = (val - ex.max) / (ex.min - ex.max) * 100;
+                }
+                
+                if (ex.type === 'position_y') percent = val < 0 ? 100 : 0; 
+                if (ex.type === 'knee_height') percent = (val > 0.1) ? 100 : (val * 500); 
+                if (ex.type === 'cross_touch') percent = (val < 0.3) ? 100 : 0;
+                
+                percent = Math.max(0, Math.min(100, percent));
+                els.progress.style.width = `${percent}%`;
+
+                // 3. LÓGICA CONTEO
+                let active = false;
+
+                if (['angle', 'angle_shoulder'].includes(ex.type)) {
+                    if (ex.min < ex.max && val < ex.min) active = true; 
+                    else if (ex.min > ex.max && val > ex.min) active = true;
+                } 
+                else if (ex.type === 'angle_torso') { if (val > ex.min) active = true; }
+                else if (ex.type === 'position_y') { if (val < ex.min) active = true; }
+                else if (ex.type === 'knee_height') { if (val > 0.15) active = true; } 
+                else if (ex.type === 'cross_touch') { if (val < 0.35) active = true; } 
+
+                if (active) {
+                    els.feedback.textContent = "¡Mantén!";
+                    els.feedback.style.color = "#2e7d32"; 
+                } else {
+                    els.feedback.textContent = percent > 50 ? "¡Casi...!" : "Dale rango";
+                    els.feedback.style.color = "#1565C0"; 
+                }
+
+                // --- MÁQUINA DE ESTADOS ---
+                if (state.phase === 'wait_active') {
+                    if (active) {
+                        state.phase = 'wait_rest'; 
+                        log("Zona alcanzada. Regresa para contar.");
+                    }
+                } 
+                else if (state.phase === 'wait_rest') {
+                    // Si ya no está activo Y ha relajado el movimiento al menos al 30%
+                    if (!active && percent < 30) {
+                        completeRep();
+                        state.phase = 'wait_active';
+                    }
+                } 
+
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        function completeRep() {
+            state.reps++;
+            els.count.textContent = state.reps;
+            
+            // SONIDO DE REP
+            playBeep(600, 0.1); // Beep agudo (600Hz)
+            log(`Repetición ${state.reps} OK.`);
+
+            els.feedback.textContent = `¡Repetición ${state.reps}!`;
+            els.feedback.style.transform = "scale(1.2)";
+            setTimeout(() => els.feedback.style.transform = "scale(1)", 200);
+
+            if (state.reps >= state.target) {
+                state.exercising = false;
+                
+                // SONIDO DE VICTORIA (Doble tono)
+                setTimeout(() => playBeep(800, 0.1), 100);
+                setTimeout(() => playBeep(1000, 0.3), 250);
+
+                els.btnStart.textContent = "¡Meta Cumplida!";
+                els.btnStart.style.background = "#FFC107";
+                els.btnStart.style.color = "#333";
+                els.feedback.textContent = "🎉 ¡FELICIDADES!";
+                log("¡Serie finalizada!");
+                
+                setTimeout(() => {
+                    els.btnStart.textContent = "2. Iniciar";
+                    els.btnStart.style.background = ""; 
+                    els.btnStart.style.color = "";
+                    els.btnStart.classList.remove('active');
+                    els.feedback.textContent = "Listo para otra serie";
+                }, 4000);
+            }
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
